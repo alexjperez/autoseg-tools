@@ -125,7 +125,7 @@ if __name__ == "__main__":
 	          ymax,zi+1,zi+1,file_mrc,td_i+".mrc"))
 
         # Create binary labels from tiles and segmentation
-        os.system("imodmop -mask 1 %s %s %s" %(file_extract+"_cont.mod",
+        os.system("imodmop -mode 0 -mask 1 %s %s %s" %(file_extract+"_cont.mod",
 	          td_i+".mrc",tl_i+".mrc"))
 
         # Convert files to PNG
