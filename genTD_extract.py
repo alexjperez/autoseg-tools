@@ -22,6 +22,7 @@ import getopt
 import re
 import numpy
 import Image
+import subprocess
 from sys import stderr, argv
 
 def usage(err = 0, msg = None):
@@ -81,6 +82,13 @@ if __name__ == "__main__":
     if not "," in dims:
         usage(2, 
 	      "The dimensions specified by -d must be separated by a comma.")
+    
+    # Check that the input mrc file is 8-bit. Return error and quit if not
+    cmd = "header -mode %s" % file_mrc    
+    mode = int(subprocess.Popen(cmd.split(), stdout = 
+               subprocess.PIPE).communicate()[0])
+    if mode != 0:
+        usage(2, "The input MRC file must be 8-bit to continue.")
 
     # Make output directories if necessary
     if not os.path.isdir(os.path.join(path_out,"training_data","images")):
