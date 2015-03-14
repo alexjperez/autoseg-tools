@@ -358,6 +358,8 @@ if __name__ == "__main__":
         os.remove(objfile + ".mod")
         handle.seek(0)
 
+        # Add volume filter here
+
         # (OPTIONAL) Determine the object type. 
         if checkobjtype:
             objtype = getObjectType(handle)
