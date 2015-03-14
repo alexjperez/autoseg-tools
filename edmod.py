@@ -226,6 +226,18 @@ if __name__ == "__main__":
 
     p.add_option("--transparency", dest = "transparency", metavar = "INT",
                  help = "Transparency of the object (in %, where 0 = opaque)")
+ 
+    p.add_option("--volumelow", dest = "vlow", metavar = "INT",
+                 help = "Low threshold for object removal based on volume. All "
+                        "objects with volumes less than this wil be removed.")
+
+    p.add_option("--volumehigh", dest = "vhigh", metavar = "INT",
+                 help = "High threshold for object removal based on volume. All "
+                        "objects with volumes greater than this will be removed.")
+
+    p.add_option("--volumeunits", dest = "vunit", metavar ="STR",
+                 help = "Units for the low and high volume cutoffs. Available "
+                        "options are: pix, nm, um. Default units are pix.")
 
     p.add_option("--rmbycont", dest = "rmcont", metavar = "INT",
                  help = "Removes all objects that have a number of contours "
@@ -299,14 +311,29 @@ if __name__ == "__main__":
     if opts.ignorescat or opts.ignoreopen or opts.ignoreclosed:
         checkobjtype = 1
 
+    # If volume is being checked, ignore scattered objects
+    if opts.vlow or opts.vhigh:
+        opts.ignorescat = True
+        if not opts.vunit:
+            opts.vunit = "pix"
+        if ((opts.vunit is not "nm") and (opts.vunit is not "um") and 
+           (opts.vunit is not "pix")):
+            usage("Improper unit string for --volunit.")
+       
+    ####
+    #### DO THE VOLUME CHECKING ON THE INPUT MODEL FILE, OUTSIDE OF THE LOOP!
+ 
+
     # Convert entire model to ASCII format 
     asciifile = os.path.join(path_tmp, file_in.split('.')[0] + ".txt")
     handle = mod2ascii(file_in, asciifile)
 
-    # Parse the ASCII file to get the total number of objects
+    # Parse the ASCII file to get the total number of objects and the units
     handle.seek(0)
     line = matchLine("^imod", handle)
     nobj = int(line.split()[1])
+    line = matchLine("^units", handle)
+    units = line.split()[1]
     if not opts.all:
         handle.close()
         os.remove(asciifile)
@@ -357,8 +384,6 @@ if __name__ == "__main__":
         handle = mod2ascii(objfile + ".mod", objfile + ".txt")
         os.remove(objfile + ".mod")
         handle.seek(0)
-
-        # Add volume filter here
 
         # (OPTIONAL) Determine the object type. 
         if checkobjtype:
