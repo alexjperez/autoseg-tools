@@ -17,129 +17,186 @@
 # working directory.
 
 import os
-import textwrap
-import getopt
 import re
-import numpy
-import Image
-import subprocess
-from sys import stderr, argv
+import array
+from optparse import OptionParser
+from subprocess import Popen, call, PIPE
+from sys import stderr, exit, argv
 
-def usage(err = 0, msg = None):
-    tw = textwrap.TextWrapper(width = 70, initial_indent = ' '*4, 
-                              subsequent_indent = ' '*8);
-    if msg != None:
-        print >> stderr, tw.fill(msg)
+def usage(errstr):
     print ""
-    print "Usage:"
-    print(tw.fill("%s -i file.mrc -o file.mod -d 500,500" % argv[0]))
+    print "ERROR: %s" % errstr
     print ""
-    print("Required Arguments:")
-    print(tw.fill("-i  Input MRC file to extract training images from."))
-    print(tw.fill("-m  Input IMOD model file to generate training labels "
-                  "from. The model file must contain two object: (1) A "
-		  "scattered object consisting of seed points, and (2) a "
-		  "closed contour object containing the segmentations to "
-		  "generate training labels from."))
-    print(tw.fill(
-        "-d  Dimensions of the training data in X,Y (i.e. 500,500)."))
+    p.print_help()
     print ""
-    print "Optional Arguments:"
-    print(tw.fill(
-        "-o  Output path to store training images and labels to. The "
-        "default path is the current directory."))
-    print(tw.fill("-h  Display this help information."))
-    print ""
-    exit(err)
+    exit(1)
 
 if __name__ == "__main__":
-    path_out = os.getcwd()
-    try:
-        opts, args = getopt.getopt(argv[1:], "ho:i:m:d:")
-    except getopt.GetoptError as err: 
-	usage(2, str(err))
-    for opt, arg in opts:
-        if opt == '-h': 
-	    usage()
-	elif opt in ("-o"): 
-	    path_out = arg
-	elif opt in ("-i"):
-	    file_mrc = arg
-	elif opt in ("-m"):
-	    file_mod = arg
-	elif opt in ("-d"):
-	    dims = arg
-    
-    # Check the validity of the input arguments
-    if len(opts) < 3:
-        usage(2, "Arguments -i, -m, and -d are required.")
-    if not os.path.isfile(file_mrc):
-        usage(2, "The MRC file specified by -i does not exist.")
-    if not os.path.isfile(file_mod):
-        usage(2, "The model file specified by -m does not exist.")
-    if not os.path.isdir(path_out):
-        usage(2, "The output path specified by -o does not exist.")
-    if not "," in dims:
-        usage(2, 
-	      "The dimensions specified by -d must be separated by a comma.")
-    
-    # Check that the input mrc file is 8-bit. Return error and quit if not
-    cmd = "header -mode %s" % file_mrc    
-    mode = int(subprocess.Popen(cmd.split(), stdout = 
-               subprocess.PIPE).communicate()[0])
-    if mode != 0:
-        usage(2, "The input MRC file must be 8-bit to continue.")
+    p = OptionParser(usage = "%prog [options] file.mrc file.mod Xdim Ydim", 
+                     description =
+                     "Extracts a set of training images and labels from a "
+                     "given MRC image stack with seeds and contours provided "
+                     "by the IMOD model file. Requires four input arguments: "
+                     "1) file.mrc - The name of the input mrc file on which "
+                     "segmentations were made; 2) file.mod - The name of the "
+                     "IMOD model file that contains seed points and training "
+                     "segmentations; 3) Xdim - Horizontal size of the "
+                     "training images and labels to be extracted; 4) Ydim - "
+                     "Vertical size of the training images and labels to be "
+                     "extracted.", 
+                     epilog =
+                     "Example: %s ZT04_01.mrc ZT04_01_trainMito.mod 500 500"
+                     % os.path.basename(argv[0]))    
+ 
+    p.add_option("-o", dest = "path_out", metavar = "PATH",
+                 help = "Output path to save training images and labels to "
+                        "(DEFAULT = Current directory).")
 
+    p.add_option("-s", dest = "objscat", metavar = "INT",
+                 help = "Object number in the IMOD model file that contains "
+                        "the scattered seed points (DEFAULT = 1).")
+
+    p.add_option("-c", dest = "objseg", metavar = "INT",
+                 help = "Object number in the IMOD model file that contains "
+                        "the closed contour segmentations (DEFAULT = 2).")
+
+    (opts, args) = p.parse_args()   
+
+    # Set the positional arguments
+    if len(args) != 4:
+        usage("Improper number of arguments. See usage below.")
+    file_mrc = args[0]
+    file_mod = args[1]
+    dimx = int(args[2])
+    dimy = int(args[3])
+
+    # Set and check the output directory
+    if opts.path_out:
+        path_out = opts.path_out
+    else:
+        path_out = os.getcwd()
+    if not os.path.isdir(path_out):
+        usage("The output path specified by -o does not exist.")
+
+    # Check the validity of the positional arguments
+    if not os.path.isfile(file_mrc):
+        usage("The MRC file %s does not exist." % file_mrc)
+    if not os.path.isfile(file_mod):
+        usage("The model file %s does not exist." % file_mod)
+
+    # Check the validity of the optional arguments
+    if (opts.objscat and not opts.objseg) or (opts.objseg and not opts.objscat):
+        usage("If specifying non-default objects, both -s and -c must be used.")
+
+    # Set objects
+    if opts.objscat:
+        objscat = int(opts.objscat)
+    else:
+        objscat = 1
+    if opts.objseg:
+        objseg = int(opts.objseg)
+    else:
+        objseg = 2
+
+    # Check the version of IMOD
+    imoddir = os.getenv('IMOD_DIR')
+    if imoddir:
+        imodvers_file = open(os.path.join(imoddir, "VERSION"), 'r')
+	imodvers = imodvers_file.read()
+	if imodvers:
+	    imodvers = float(imodvers.split('.')[0]) + 0.1 * float(imodvers.split('.')[1])
+	    print "Running IMOD version %0.1f.X" % imodvers
+            imodvers_file.close()
+	else:
+	    usage("Cannot determine the IMOD version. Check $IMOD_DIR/VERSION")
+    else:
+        usage("IMOD is not installed or sourced properly.")
+
+    # Check that the MRC file is 8-bit
+    cmd = "header -mode %s" % file_mrc
+    mode = int(Popen(cmd.split(), stdout = PIPE).communicate()[0])
+    if mode != 0:
+        usage("The input MRC file must be 8-bit to continue. Please run newstack -mode 0.")
+ 
     # Make output directories if necessary
     if not os.path.isdir(os.path.join(path_out,"training_data","images")):
         os.makedirs(os.path.join(path_out,"training_data","images"))
     if not os.path.isdir(os.path.join(path_out,"training_data","labels")):
         os.makedirs(os.path.join(path_out,"training_data","labels"))
 
-    # Parse training dimensions
-    dims_split = dims.split(",",1)
-    dimx = int(dims_split[0])
-    dimy = int(dims_split[1])
+    # Process training dimensions
     radx = int(dimx / 2)
     rady = int(dimy / 2)
 
     # Extract seeds and contours from the input model file 
     mod_base = os.path.splitext(os.path.basename(file_mod))[0]
     file_extract = os.path.join(path_out,mod_base)
-    os.system("imodextract 1 %s %s" %(file_mod, file_extract + "_seed.mod"))
-    os.system("imodextract 2 %s %s" %(file_mod, file_extract + "_cont.mod"))
+    cmd = "imodextract %d %s %s" % (objscat, file_mod, file_extract + "_seed.mod")
+    call(cmd.split())
+    cmd = "imodextract %d %s %s" % (objseg, file_mod, file_extract + "_cont.mod")
+    call(cmd.split())
 
     # Extract point listings from the seed model file
-    os.system("model2point %s %s" %(file_extract + "_seed.mod", 
-              file_extract + "_seed.txt"))
-   
-    # Loop over each seed point
-    coords = numpy.loadtxt(file_extract + "_seed.txt", dtype="int")
-    for i in range(0,coords.shape[0]):
+    cmd = "model2point %s %s" % (file_extract + "_seed.mod",
+           file_extract + "_seed.txt")
+    call(cmd.split())
+
+    # Read seed points into an array
+    arrayx = array.array('l');
+    arrayy = array.array('l');
+    arrayz = array.array('l');
+    handle = open(file_extract + "_seed.txt", 'r')
+    for line in handle:
+        line = line.split()
+        arrayx.append(int(line[0]))
+        arrayy.append(int(line[1]))
+        arrayz.append(int(line[2]))
+
+    # Loop over each point, extract tiles   
+    for i in range(0, len(arrayx)):
         td_i = os.path.join(path_out,"training_data","images",
 	                    str(i + 1).zfill(3))     
         tl_i = os.path.join(path_out,"training_data","labels",
 	                    str(i + 1).zfill(3))
-	xi = coords[i,0]
-	yi = coords[i,1]
-	zi = coords[i,2]
+	xi = arrayx[i]
+	yi = arrayy[i]
+	zi = arrayz[i]
 	xmin = xi - radx
 	xmax = xi + radx - 1
 	ymin = yi - rady
 	ymax = yi + rady - 1
 
 	# Extract tiles from MRC stack
-        os.system("trimvol -x %d,%d -y %d,%d -z %d,%d %s %s" %(xmin,xmax,ymin,
-	          ymax,zi+1,zi+1,file_mrc,td_i+".mrc"))
+        cmd = "trimvol -x %d,%d -y %d,%d -z %d,%d %s %s" % (xmin, xmax, ymin,
+               ymax, zi+1, zi+1, file_mrc, td_i + ".mrc")
+	call(cmd.split())
 
         # Create binary labels from tiles and segmentation
-        os.system("imodmop -mode 0 -mask 1 %s %s %s" %(file_extract+"_cont.mod",
-	          td_i+".mrc",tl_i+".mrc"))
+        cmd = "imodmop -mode 0 -mask 1 %s %s %s" % (file_extract + "_cont.mod",
+	       td_i + ".mrc", tl_i + ".mrc")
+        call(cmd.split())
 
-        # Convert files to PNG
-        os.system("mrc2tif -p %s %s" %(td_i+".mrc",td_i+".png"))
-	os.system("mrc2tif -p %s %s" %(tl_i+".mrc",tl_i+".png"))
-        os.remove(td_i + ".mrc")
+        # Convert files to PNG. If the IMOD version is > 4.7, do this using 
+	# mrc2tif with a -p flag. If not, do it in two steps: (1) mrc2tif and
+	# (2) ImageMagick convert to go from tif to png. 
+        
+	if imodvers > 4.7: 
+	    cmd = "mrc2tif -p %s %s" % (td_i + ".mrc", td_i + ".png")
+	    call(cmd.split())
+	    cmd = "mrc2tif -p %s %s" % (tl_i + ".mrc", tl_i + ".png")
+            call(cmd.split())
+        else:
+	    cmd = "mrc2tif %s %s" % (td_i + ".mrc", td_i + ".tif")
+            call(cmd.split())
+	    cmd = "mrc2tif %s %s" % (tl_i + ".mrc", tl_i + ".tif")
+	    call(cmd.split())
+	    cmd = "convert %s %s" % (td_i + ".tif", td_i + ".png")
+	    call(cmd.split())
+	    cmd = "convert %s %s" % (tl_i + ".tif", tl_i + ".png")
+	    call(cmd.split())
+	    os.remove(td_i + ".tif")
+	    os.remove(tl_i + ".tif")
+	os.remove(td_i + ".mrc")
         os.remove(tl_i + ".mrc")
 
     # Cleanup
