@@ -117,7 +117,7 @@ def rmObjCheck(rmarray, handle, opts, i):
 # do not begin with "contour", print the line if contswitch is off. Otherwise do not print
 # the line. After the entire file has been parsed, update the "object" line with the total
 # number of new contours.
-def rmSmallContours(file_in, opts):
+def rmSmallContours(file_in, opts, handle):
     C = 0
     contsum = 0
     contswitch = 0
@@ -139,7 +139,7 @@ def rmSmallContours(file_in, opts):
                 contswitch = 0
                 sys.stdout.write(line)
     if C is not 0:
-        objhandle.seek(0)
+        handle.seek(0)
         objswitch = 0
         for line in fileinput.input(file_in + ".txt", inplace = True):
             if not objswitch and re.match("^object", line):
@@ -227,15 +227,25 @@ if __name__ == "__main__":
     p.add_option("--transparency", dest = "transparency", metavar = "INT",
                  help = "Transparency of the object (in %, where 0 = opaque)")
  
-    p.add_option("--volumelow", dest = "vlow", metavar = "INT",
+    p.add_option("--vlow", dest = "vlow", metavar = "INT",
                  help = "Low threshold for object removal based on volume. All "
                         "objects with volumes less than this wil be removed.")
 
-    p.add_option("--volumehigh", dest = "vhigh", metavar = "INT",
+    p.add_option("--vhigh", dest = "vhigh", metavar = "INT",
                  help = "High threshold for object removal based on volume. All "
                         "objects with volumes greater than this will be removed.")
 
-    p.add_option("--volumeunits", dest = "vunit", metavar ="STR",
+    p.add_option("--slow", dest = "slow", metavar = "INT",
+                 help = "Low threshold for object removal based on surface area. "
+                        "All objects with surface areas less than this wil be "
+                        "removed.")
+
+    p.add_option("--shigh", dest = "shigh", metavar = "INT",
+                 help = "High threshold for object removal based on surface area. "
+                        "All objects with volumes greater than this will be "
+                        "removed.")
+
+    p.add_option("--units", dest = "unit", metavar ="STR",
                  help = "Units for the low and high volume cutoffs. Available "
                         "options are: pix, nm, um. Default units are pix.")
 
@@ -305,24 +315,22 @@ if __name__ == "__main__":
     # Set switches
     checkobjtype = 0
     objmodsswitch = 0
+    runimodinfo = 0
     if (opts.colorout or opts.nameout or opts.linewidth or opts.filled or
        opts.notfilled or opts.pointsize or opts.transparency):
         objmodsswitch = 1
+    if opts.vlow or opts.vhigh or opts.slow or opts.shigh:
+        runimodinfo = 1
+        opts.ignorescat = True
     if opts.ignorescat or opts.ignoreopen or opts.ignoreclosed:
         checkobjtype = 1
 
-    # If volume is being checked, ignore scattered objects
-    if opts.vlow or opts.vhigh:
-        opts.ignorescat = True
-        if not opts.vunit:
-            opts.vunit = "pix"
-        if ((opts.vunit is not "nm") and (opts.vunit is not "um") and 
-           (opts.vunit is not "pix")):
-            usage("Improper unit string for --volunit.")
-       
-    ####
-    #### DO THE VOLUME CHECKING ON THE INPUT MODEL FILE, OUTSIDE OF THE LOOP!
- 
+
+    # Initialize arrays
+    rmarray = array.array('l')
+    objarray = array.array('l')
+    filterarray = array.array('l')
+    ignorearray = array.array('l')
 
     # Convert entire model to ASCII format 
     asciifile = os.path.join(path_tmp, file_in.split('.')[0] + ".txt")
@@ -333,15 +341,50 @@ if __name__ == "__main__":
     line = matchLine("^imod", handle)
     nobj = int(line.split()[1])
     line = matchLine("^units", handle)
-    units = line.split()[1]
+    modunit = line.split()[1]
     if not opts.all:
         handle.close()
         os.remove(asciifile)
 
+    # (OPTIONAL) Get volume/surface area of all objects
+    if runimodinfo:
+        if not opts.unit:
+            opts.unit = modunit
+        if ((opts.unit != "nm") and (opts.unit != "um") and
+           (opts.unit != "pix")):
+            usage("Improper unit string for --units.")
+        if modunit is "pix" and (opts.unit is "nm" or opts.unit is "um"):
+            usage("Model header units must be set to {0}".format(opts.unit))
+        infofile = os.path.join(path_tmp, 'imodinfo.txt')
+        infohandle = open(infofile, "w+")
+        cmd = "imodinfo -c {0}".format(file_in)
+        call(cmd.split(), stdout = infohandle)
+        infohandle.seek(0)
+        line = matchLine("#-", infohandle)
+        C = 0
+        if modunit == "nm" and opts.unit == "um":
+            scale = 0.001
+        elif modunit == "um" and opts.unit == "nm":
+            scale = 1000
+        else:
+            scale = 1
+        for line in infohandle:
+            split = line.split()
+            if len(split) == 8:
+                C = C + 1
+                vol = float(split[3]) * (scale**3)
+                sa = float(split[4]) * (scale**2)
+                if ((opts.vlow and vol < float(opts.vlow)) or
+                   (opts.vhigh and vol > float(opts.vhigh)) or
+                   (opts.slow and sa < float(opts.slow)) or
+                   (opts.shigh and sa > float(opts.shigh))):
+                    filterarray.append(C)
+        infohandle.close()
+        os.remove(infofile)
+
     # (OPTIONAL) If the --objects option is seleted, initiate a new array that 
     # contains the desired objects. If it is not selected, set this array to 
     # contain a list of all objects in the model file.
-    objarray = array.array('l')
     if opts.objects:
         objarray = parseObjectList(opts.objects, objarray, nobj)
     else:
@@ -375,7 +418,6 @@ if __name__ == "__main__":
     ## MAIN LOOP 
     ##########
 
-    rmarray = array.array('l')
     for i in range(0, nobj):
         # Extract the object to a new model file, then convert it to ASCII
         objfile = os.path.join(path_tmp, "obj_" + str(i+1).zfill(8))
@@ -390,18 +432,22 @@ if __name__ == "__main__":
             objtype = getObjectType(handle)
             if ((opts.ignoreclosed and objtype == 1) or (opts.ignoreopen and objtype == 2) or
                (opts.ignorescat and objtype == 3)):
-                objarray.remove(i+1)
+                ignorearray.append(i+1)
             handle.seek(0)
-       
+        if i+1 in filterarray and not i+1 in ignorearray:
+            rmarray.append(i+1)
+            os.remove(objfile + ".txt")
+            continue      
+ 
         # (OPTIONAL) If --rmall is given, look for objects to remove BEFORE
         # updating objarray based on --colorin or --namein. 
-        if opts.rmall and i+1 in objarray and (opts.rmempty or opts.rmcont):
+        if opts.rmall and (opts.rmempty or opts.rmcont) and i+1 in objarray and not i+1 in ignorearray:
             rmarray = rmObjCheck(rmarray, handle, opts, i)
 
         # (OPTIONAL) Check the object to see if it satisfies the arguments given by --colorin
         # and/or --namein. If it does, keep it in objarray. If it doesn't, remove it from
         # objarray.
-        if (opts.colorin or opts.namein) and i+1 in objarray:
+        if (opts.colorin or opts.namein) and i+1 in objarray and not i+1 in ignorearray:
             colorswitch = 0
             nameswitch = 0
             for line in handle:
@@ -416,15 +462,15 @@ if __name__ == "__main__":
 
         # If the --rmall argument was not given, look for ojbects to remove AFTER updating
         # the objarray based on --colorin or --namein
-        if not opts.rmall and (opts.rmempty or opts.rmcont) and i+1 in objarray:
+        if not opts.rmall and (opts.rmempty or opts.rmcont) and i+1 in objarray and not i+1 in ignorearray:
             handle.seek(0)
             rmarray = rmObjCheck(rmarray, handle, opts, i)
 
         # (OPTIONAL) Parse through individual contours, and remove contours that have a number
         # of points less than that specified by --rmbypoint.
-        if opts.rmpoint and i+1 in objarray:
-            objhandle.seek(0)
-            C = rmSmallContours(objfile, opts)
+        if opts.rmpoint and i+1 in objarray and not i+1 in ignorearray:
+            handle.seek(0)
+            C = rmSmallContours(objfile, opts, handle)
     
     handle.close()
  
@@ -432,6 +478,8 @@ if __name__ == "__main__":
     # ASCII model file, and modify it as desired.
     if objmodsswitch:
         for i in range(0, len(objarray)):
+            if i+1 in rmarray or i+1 in ignorearray:
+                continue
             objfile = os.path.join(path_tmp, "obj_" + str(objarray[i]).zfill(8) + ".txt")
             for line in fileinput.input(objfile, inplace = True):
                 if opts.colorout:
@@ -439,6 +487,9 @@ if __name__ == "__main__":
                 else:
                     line = matchAndReplace(line, opts, 0, 0)
                 sys.stdout.write(line)
+
+    print filterarray
+    print ignorearray
 
     # Combine all files
     objstr = ""
