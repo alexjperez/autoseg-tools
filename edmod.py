@@ -7,6 +7,7 @@ import array
 import fileinput
 import array
 import shutil
+import math
 from random import randrange
 from optparse import OptionParser
 from subprocess import Popen, call, PIPE
@@ -245,6 +246,17 @@ if __name__ == "__main__":
                         "All objects with volumes greater than this will be "
                         "removed.")
 
+    p.add_option("--sphericitylow", dest = "spherlow", metavar = "FLOAT",
+                 help = "Low threshold for object removal based on sphericity. All "
+                        "objects with a sphericity coefficient less than this will "
+                        "be removed. Sphericity ranges from 0 to 1, where 1 is a "
+                        "perfect sphere.")
+
+    p.add_option("--sphericityhigh", dest = "spherhigh", metavar = "FLOAT",
+                 help = "High threshold for object removal based on sphericity. All "
+                        "objects with a sphericity coefficient greater than this will "
+                        "be removed.")
+
     p.add_option("--units", dest = "unit", metavar ="STR",
                  help = "Units for the low and high volume cutoffs. Available "
                         "options are: pix, nm, um. Default units are pix.")
@@ -319,12 +331,11 @@ if __name__ == "__main__":
     if (opts.colorout or opts.nameout or opts.linewidth or opts.filled or
        opts.notfilled or opts.pointsize or opts.transparency):
         objmodsswitch = 1
-    if opts.vlow or opts.vhigh or opts.slow or opts.shigh:
+    if opts.vlow or opts.vhigh or opts.slow or opts.shigh or opts.spherlow or opts.spherhigh:
         runimodinfo = 1
         opts.ignorescat = True
     if opts.ignorescat or opts.ignoreopen or opts.ignoreclosed:
         checkobjtype = 1
-
 
     # Initialize arrays
     rmarray = array.array('l')
@@ -374,10 +385,17 @@ if __name__ == "__main__":
                 C = C + 1
                 vol = float(split[3]) * (scale**3)
                 sa = float(split[4]) * (scale**2)
+                if opts.spherlow or opts.spherhigh:
+                    if sa == 0:
+                        spher = 0
+                    else:
+                        spher = (math.pi**(1.0/3) * (6*vol)**(2.0/3))/sa
                 if ((opts.vlow and vol < float(opts.vlow)) or
                    (opts.vhigh and vol > float(opts.vhigh)) or
                    (opts.slow and sa < float(opts.slow)) or
-                   (opts.shigh and sa > float(opts.shigh))):
+                   (opts.shigh and sa > float(opts.shigh)) or
+                   (opts.spherlow and spher < float(opts.spherlow)) or
+                   (opts.spherhigh and spher > float(opts.spherhigh))):
                     filterarray.append(C)
         infohandle.close()
         os.remove(infofile)
