@@ -62,7 +62,7 @@ if __name__ == "__main__":
 
     (opts, args) = p.parse_args()   
 
-    # Set the positional arguments
+    # Set the arguments
     if len(args) != 4:
         usage("Improper number of arguments. See usage below.")
     file_mrc = args[0]
@@ -78,11 +78,11 @@ if __name__ == "__main__":
     if not os.path.isdir(path_out):
         usage("The output path specified by -o does not exist.")
 
-    # Check the validity of the positional arguments
+    # Check the validity of the arguments
     if not os.path.isfile(file_mrc):
-        usage("The MRC file %s does not exist." % file_mrc)
+        usage("The MRC file {0} does not exist.".format(file_mrc))
     if not os.path.isfile(file_mod):
-        usage("The model file %s does not exist." % file_mod)
+        usage("The model file {0} does not exist.".format(file_mod))
 
     # Check the validity of the optional arguments
     if (opts.objscat and not opts.objseg) or (opts.objseg and not opts.objscat):
@@ -113,7 +113,7 @@ if __name__ == "__main__":
         usage("IMOD is not installed or sourced properly.")
 
     # Check that the MRC file is 8-bit
-    cmd = "header -mode %s" % file_mrc
+    cmd = "header -mode {0}".format(file_mrc)
     mode = int(Popen(cmd.split(), stdout = PIPE).communicate()[0])
     if mode != 0:
         usage("The input MRC file must be 8-bit to continue. Please run newstack -mode 0.")
@@ -131,13 +131,15 @@ if __name__ == "__main__":
     # Extract seeds and contours from the input model file 
     mod_base = os.path.splitext(os.path.basename(file_mod))[0]
     file_extract = os.path.join(path_out,mod_base)
-    cmd = "imodextract %d %s %s" % (objscat, file_mod, file_extract + "_seed.mod")
+    cmd = "imodextract {0} {1} {2}".format(objscat, file_mod, 
+           file_extract + "_seed.mod")
     call(cmd.split())
-    cmd = "imodextract %d %s %s" % (objseg, file_mod, file_extract + "_cont.mod")
+    cmd = "imodextract {0} {1} {2}".format(objseg, file_mod,
+           file_extract + "_cont.mod")
     call(cmd.split())
 
     # Extract point listings from the seed model file
-    cmd = "model2point %s %s" % (file_extract + "_seed.mod",
+    cmd = "model2point {0} {1}".format(file_extract + "_seed.mod",
            file_extract + "_seed.txt")
     call(cmd.split())
 
@@ -167,13 +169,17 @@ if __name__ == "__main__":
 	ymax = yi + rady - 1
 
 	# Extract tiles from MRC stack
-        cmd = "trimvol -x %d,%d -y %d,%d -z %d,%d %s %s" % (xmin, xmax, ymin,
-               ymax, zi+1, zi+1, file_mrc, td_i + ".mrc")
+        cmd = "trimvol -x {0},{1} -y {2},{3} -z {4},{5} {6} {7}".format(
+               xmin, xmax, ymin, ymax, zi+1, zi+1, 
+               file_mrc, 
+               td_i + ".mrc")
 	call(cmd.split())
 
         # Create binary labels from tiles and segmentation
-        cmd = "imodmop -mode 0 -mask 1 %s %s %s" % (file_extract + "_cont.mod",
-	       td_i + ".mrc", tl_i + ".mrc")
+        cmd = "imodmop -mode 0 -mask 1 {0} {1} {2}".format(
+               file_extract + "_cont.mod",
+               td_i + ".mrc", 
+               tl_i + ".mrc")
         call(cmd.split())
 
         # Convert files to PNG. If the IMOD version is > 4.7, do this using 
@@ -181,18 +187,18 @@ if __name__ == "__main__":
 	# (2) ImageMagick convert to go from tif to png. 
         
 	if imodvers > 4.7: 
-	    cmd = "mrc2tif -p %s %s" % (td_i + ".mrc", td_i + ".png")
+	    cmd = "mrc2tif -p {0} {1}".format(td_i + ".mrc", td_i + ".png")
 	    call(cmd.split())
-	    cmd = "mrc2tif -p %s %s" % (tl_i + ".mrc", tl_i + ".png")
+	    cmd = "mrc2tif -p {0} {1}".format(tl_i + ".mrc", tl_i + ".png")
             call(cmd.split())
         else:
-	    cmd = "mrc2tif %s %s" % (td_i + ".mrc", td_i + ".tif")
+	    cmd = "mrc2tif {0} {1}".format(td_i + ".mrc", td_i + ".tif")
             call(cmd.split())
-	    cmd = "mrc2tif %s %s" % (tl_i + ".mrc", tl_i + ".tif")
+	    cmd = "mrc2tif {0} {1}".format(tl_i + ".mrc", tl_i + ".tif")
 	    call(cmd.split())
-	    cmd = "convert %s %s" % (td_i + ".tif", td_i + ".png")
+	    cmd = "convert {0} {1}".format(td_i + ".tif", td_i + ".png")
 	    call(cmd.split())
-	    cmd = "convert %s %s" % (tl_i + ".tif", tl_i + ".png")
+	    cmd = "convert {0} {1}".format(tl_i + ".tif", tl_i + ".png")
 	    call(cmd.split())
 	    os.remove(td_i + ".tif")
 	    os.remove(tl_i + ".tif")
@@ -203,4 +209,3 @@ if __name__ == "__main__":
     os.remove(file_extract + "_cont.mod")
     os.remove(file_extract + "_seed.mod")
     os.remove(file_extract + "_seed.txt")
-        
